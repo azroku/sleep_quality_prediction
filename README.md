@@ -53,7 +53,9 @@ data/
 
 ## Usage
 
-Run scripts in order. Each script reads from `output/` and saves results back to `output/`.
+01_data_prep.py reads from `data/` and writes to `output/`.
+All subsequent scripts read from `output/` and write back to `output/`.
+Run scripts in order — each depends on the output of the previous one.
 
 ```bash
 python src/01_data_loading_and_cleaning.py
@@ -80,9 +82,9 @@ sleep-quality-prediction/
 ├── data/                                 Raw CSV files from wearable device
 ├── output/                               Generated figures and result JSONs
 ├── report/
+│   ├── KuricAzra_Report.pdf
 │   └── KuricAzra_Report.tex              LaTeX paper (Nature Scientific Reports format)
-├── poster/
-│   └── KuricAzra_Poster.pptx             A3 conference poster
+├── KuricAzra_Poster.pdf                  A3 conference poster
 ├── requirements.txt
 └── README.md
 ```
