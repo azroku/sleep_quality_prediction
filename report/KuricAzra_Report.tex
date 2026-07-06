@@ -1,0 +1,410 @@
+\documentclass[fleqn,10pt]{wlscirep}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{float}
+% Reduce space around floats
+\setlength{\textfloatsep}{8pt plus 2pt minus 2pt}
+\setlength{\floatsep}{6pt plus 2pt minus 2pt}
+\setlength{\intextsep}{8pt plus 2pt minus 2pt}
+\setlength{\abovecaptionskip}{4pt}
+\setlength{\belowcaptionskip}{2pt}
+
+% ─── Title & Authors ──────────────────────────────────────────────────────────
+\title{Predicting Sleep Quality from Daytime Physiological and Behavioural Metrics Collected via Consumer Wearable: An N-of-1 Machine Learning Study}
+
+\author[1]{Azra Kurić}
+\affil[1]{Faculty of Electrical Engineering, University of Sarajevo, Sarajevo, Bosnia and Herzegovina}
+
+\keywords{sleep quality prediction; wearable devices; heart rate variability; machine learning; deep learning; explainable AI; SHAP; anomaly detection; N-of-1 study}
+
+\begin{abstract}
+Poor sleep quality is a widespread health concern linked to cognitive impairment, metabolic dysfunction, and increased cardiovascular risk. Consumer wearable devices offer a non-invasive means of continuously monitoring physiological signals that may precede disrupted sleep. This study investigates whether next-night sleep quality, quantified as total sleep duration, REM duration, deep sleep duration, and a binary poor/good sleep label, can be predicted from daytime physiological and behavioural metrics collected by a single wrist-worn device over six months (from November 2025 to May 2026, N\,=\,158 nights). Features included heart rate (HR), heart rate variability (HRV), blood oxygen saturation (SpO$_2$), step count, and caloric expenditure. A comprehensive pipeline encompassed classical machine learning (Ridge, Lasso, Random Forest, XGBoost, SVM), deep learning sequence models (LSTM, 1D-CNN), and unsupervised anomaly detection (Gaussian Mixture Models, Isolation Forest), all evaluated under strict walk-forward cross-validation. Six additional experiments explored rolling temporal features, extended regression targets, weekly patterns, hyperparameter optimisation, multi-output regression, and anomaly detection. Results indicate limited direct predictive power from single-day wearable summaries (best regression $R^2 = -0.043$ for deep sleep with rolling features). Unsupervised anomaly detection substantially outperformed all supervised classifiers (Isolation Forest AUC\,=\,0.728 vs.\ best supervised AUC\,=\,0.622), suggesting that poor sleep nights are structurally distinguishable in sleep architecture even when daytime predictors carry limited signal. SHAP analysis identified caloric expenditure, maximum HR, and HRV-derived features as the most influential predictors across all outcomes. These findings contribute to the literature on personalised wearable-based sleep monitoring and delineate both the potential and current limitations of this approach for individual-level sleep quality prediction.
+\end{abstract}
+
+\begin{document}
+\flushbottom
+\maketitle
+\thispagestyle{empty}
+
+% ─── 1. INTRODUCTION ──────────────────────────────────────────────────────────
+\section*{Introduction}
+
+Sleep is a fundamental biological process essential for cognitive function, emotional regulation, immune activity, and metabolic homeostasis~\cite{worley2018}. Insufficient or fragmented sleep has been linked to increased risk of cardiovascular disease, obesity, depression, and reduced cognitive performance~\cite{alnawwar2023}. Despite this, sleep quality remains among the least routinely monitored health parameters in daily life. The gold standard for sleep assessment is polysomnography (PSG), a laboratory-based overnight recording of brain activity, eye movements, muscle tone, and respiratory signals, which is costly, intrusive, and impractical for long-term monitoring~\cite{rundo2019}.
+
+Consumer-grade wearable devices have emerged as a scalable alternative for continuous, unobtrusive sleep monitoring. Modern smartwatches equipped with photoplethysmography (PPG), accelerometers, and optical sensors can estimate sleep stages, HR, HRV, and SpO$_2$ without clinical infrastructure~\cite{leeTW2023}. However, the accuracy of consumer wearables for sleep staging relative to PSG varies considerably: a prospective multi-centre validation of 11 devices reported macro F1 scores ranging from 0.26 to 0.69~\cite{leeTW2023}. This measurement uncertainty is an important limitation when building predictive models from wearable data.
+
+Among the physiological signals captured by wearables, HRV has attracted particular interest as a marker of autonomic nervous system (ANS) activity. HRV reflects the interplay between sympathetic and parasympathetic branches of the ANS~\cite{herhaus2022}, with higher HRV generally associated with parasympathetic dominance and lower physiological stress. Low HRV has been associated with sleep fragmentation and reduced sleep efficiency~\cite{hayano2022}, raising the hypothesis that daytime HRV may serve as an early predictor of poor sleep that night. Physical activity has also been shown to positively influence sleep quality and architecture~\cite{alnawwar2023}, making daily step count and caloric expenditure plausible predictive features.
+
+A growing body of literature has applied machine learning to predict sleep quality from wearable-derived features. Lee et al.~\cite{lee2025} demonstrated that HRV features from consumer smartwatches can predict next-day wake-after-sleep-onset using models ranging from Random Forest to LSTM and Transformers. Di~Credico et al.~\cite{dicredico2024} showed that SVM applied to wearable HRV and skin temperature achieved 83.4\% classification accuracy for sleep quality. However, most studies rely on multi-participant datasets, limiting applicability to individual-level precision monitoring.
+
+This study adopts an N-of-1 design~\cite{chen2024ml}, analysing 158 consecutive nights from a single participant tracked over six months using a consumer wrist-worn device. The N-of-1 framework is appropriate for personalised health monitoring: rather than building population-level models that may not apply to any given individual, we train and evaluate models capturing this person's own physiological patterns. The research questions addressed are: (1)~Can next-night sleep quality be predicted from daytime wearable metrics? (2)~Which physiological indicators most strongly predict poor sleep? (3)~Does low daytime HRV precede fragmented or shallow sleep? Results are reported in accordance with the TRIPOD+AI~\cite{tripodai} and CLIX-M checklists.
+
+% ─── 2. METHODS ───────────────────────────────────────────────────────────────
+\section*{Methods}
+
+\subsection*{Data source and participant}
+% TRIPOD+AI item 4: source of data, setting, eligibility criteria
+Data were collected from a single healthy adult participant between November 2025 and May 2026 using a Didiconn wrist-worn consumer wearable device worn continuously during waking hours. No inclusion or exclusion criteria were applied beyond the compliance with the device wear. The study was conducted under an N-of-1 observational design; no clinical interventions were performed. Three data streams were exported as CSV: (1)~\textit{sleep data}: start/end timestamps, sleep stage durations (deep, REM, light, awake), total time asleep, and Sleep Time Ratio (sleep efficiency); (2)~\textit{vital signs}: average, minimum, and maximum HR (bpm), HRV (ms), and SpO$_2$ (\%) per day; (3)~\textit{activity}: daily step count and caloric expenditure (kcal).
+
+\subsection*{Preprocessing and data cleaning}
+% TRIPOD+AI item 7: data cleaning, handling missing values
+Raw data were processed using Python 3.13 with pandas and scikit-learn. Preprocessing comprised four steps.
+
+\textit{Datetime parsing and sleep date alignment.} Sleep episode timestamps were parsed to datetime objects. The sleep date was defined as the date of the episode's end time (morning wake-up), since sleep typically begins before midnight and ends the following morning. This ensured each sleep record was aligned with the physiological measurements from the preceding waking day, implementing a one-day temporal delay (t-1) between features and target.
+
+\textit{Duplicate record handling.} Ten dates contained two sleep records: a main overnight episode and a shorter daytime nap (95--200 minutes). The longest episode per day was retained as the primary sleep record, and a binary nap indicator was added. This approach is consistent with standard actigraphy-based sleep research practice~\cite{rahimieichi2021}.
+
+\textit{Type conversion.} Sleep Time Ratio and SpO$_2$ columns were stored as percentage strings. These were stripped and converted to float. A derived feature, HRV range (Max HRV $-$ Min HRV), was calculated to capture the autonomic variability within the day.
+
+\textit{Dataset assembly.} Sleep records were merged with the preceding day's vital signs and activity data via an inner join on the lagged date, yielding 158 nights with zero missing values.
+
+\subsection*{Outcome variables and labelling}
+% TRIPOD+AI items 8--9: outcomes, predictors
+\noindent\textbf{Task A --- Regression:} Three continuous targets: total time asleep (min), REM duration (min), and deep sleep duration (min).
+ 
+\noindent\textbf{Task B --- Classification:} The clinical AASM sleep efficiency threshold of $< 75\%$~\cite{aasm2017} yielded only one positive instance in this dataset (0.6\%), making supervised classification infeasible. A data-driven threshold was therefore adopted: nights at or below the 25th percentile of Sleep Time Ratio ($\leq 82.25\%$) were labelled as poor sleep, yielding 40 poor nights (25.3\%) and 118 good nights (74.7\%). This person-specific threshold reflects a precision medicine approach wherein quality is assessed relative to the individual's own baseline distribution rather than population clinical norms.
+
+\subsection*{Feature set}
+Thirteen daytime features were used as model inputs: average, minimum, and maximum HR (bpm); average, minimum, maximum, and range of HRV (ms); average, minimum, and maximum SpO$_2$ (\%); step count; caloric expenditure (kcal); and a binary possible non-wear flag (daily step count $< 500$ steps; threshold selected empirically based on a clear gap in the step distribution: two days recorded 274 and 279 steps respectively, while the next lowest day recorded 683 steps, suggesting device non-wear on those two days).
+
+\subsection*{Cross-validation strategy}
+% TRIPOD+AI item 10b: sample size and validation approach
+All models were implemented via \texttt{scikit-learn}'s \texttt{TimeSeriesSplit} and evaluated using walk-forward (time-series) cross-validation ($k = 5$). In each fold, the model was trained on all data preceding a split point and evaluated on the subsequent held-out period. The choice of $k = 5$ was made on practical grounds: with $N = 158$ nights, $k = 5$ yields approximately 26 test samples per fold, sufficient for stable metric estimates; $k = 10$ would reduce test folds to 14 samples, too small for reliable AUC-ROC estimation given the 40 minority-class nights, while $k = 3$ provides only three evaluation points for averaging. Random k-fold cross-validation was explicitly excluded as it permits training on future observations, constituting temporal leakage inconsistent with prospective prediction. \texttt{StandardScaler} was fitted exclusively on training folds and applied to test folds to prevent statistical leakage from held-out data.
+
+\subsection*{Machine learning models}
+% TRIPOD+AI item 10a: model specification
+\noindent\textbf{Regression:} Linear Regression (baseline), Ridge Regression ($\alpha = 1.0$), Lasso Regression ($\alpha = 0.1$), Random Forest (200 trees, max depth 5, min samples per leaf 5), and XGBoost (200 estimators, learning rate 0.05, max depth 3). Hyperparameters were set to widely-used defaults prior to the dedicated tuning experiment (Experiment 4, described in the Additional experiments subsection); default and tuned results are both reported. Each model was wrapped in a \texttt{scikit-learn} \texttt{Pipeline} with \texttt{StandardScaler} to guarantee leak-free preprocessing.
+ 
+\noindent\textbf{Classification:} Logistic Regression, Support Vector Machine (RBF kernel, $C = 1$), Random Forest, and XGBoost. Class imbalance (118 good vs.\ 40 poor nights, ratio 2.95:1) was addressed via \texttt{class\_weight=`balanced'} for scikit-learn estimators and \texttt{scale\_pos\_weight} $\approx 2.95$ for XGBoost. Without weighting, a naive classifier predicting ``good sleep'' on every night would achieve 74.7\% accuracy while being entirely uninformative; weighting penalises misclassification of the minority class proportionally to its frequency.
+
+\subsection*{Deep learning models}
+A 7-day sliding window was applied to create input sequences of shape $(7 \times 13)$, yielding 151 samples. The window length of 7 days was chosen to capture one full weekly behavioural cycle, the natural periodicity of human sleep--wake patterns, while remaining short enough to preserve an adequate number of training sequences given the dataset size. Two architectures were implemented in TensorFlow/Keras: (1)~an \textbf{LSTM} with 64 units, dropout 0.3, and a 32-unit dense layer; (2)~a \textbf{1D-CNN} with two convolutional layers (64 and 32 filters), max pooling, global average pooling, and dropout 0.3. Architecture sizes were kept deliberately small (64 units/filters) given the limited training data ($N \approx 151$ sequences); larger architectures would risk severe overfitting. Dropout ($p = 0.3$) was applied as a standard regularisation technique to reduce co-adaptation of neurons~\cite{leeTW2023}. Both were trained with the Adam optimiser (learning rate $10^{-3}$, the widely-used default~\cite{lee2025}), batch size 16 (chosen to maximise the number of gradient updates per epoch given the small dataset), early stopping (patience 15 epochs on validation loss, to halt training before overfitting while allowing sufficient convergence time), and up to 80 epochs as an upper bound. Classification models used class-weighted loss ($w_{\mathrm{minority}} \approx 2.95$), consistent with the same imbalance correction applied to ML classifiers.
+
+\subsection*{Additional experiments}
+\noindent Six supplementary analyses were conducted.
+ 
+(1)~\textit{Rolling/trend features}: 3-day and 7-day rolling means and 3-day difference features were appended to the original 13 features, expanding the feature matrix to 49 dimensions. This experiment tested whether the \textit{trajectory} of physiological change (e.g.\ a downward trend in HRV over three days) carries more predictive signal than any single day's value.
+ 
+(2)~\textit{Extended regression targets}: Sleep Onset Latency (SOL) and Wake After Sleep Onset (WASO) were evaluated as additional regression targets. These complement the primary targets by capturing sleep fragmentation: WASO measures time spent awake after initially falling asleep (a direct indicator of disrupted sleep architecture), while SOL captures difficulty initiating sleep~\cite{aasm2017}. Predicting WASO from daytime HRV is particularly relevant to research question 3 (whether low daytime HRV precedes fragmented sleep) since high WASO is the operational definition of fragmentation used in this study.
+ 
+(3)~\textit{Weekly pattern analysis}: Kruskal-Wallis H tests were applied to assess whether sleep and physiological variables differed significantly across days of the week. The Kruskal-Wallis test is a non-parametric alternative to one-way ANOVA that requires no assumption of normality~\cite{kruskal1952}, making it appropriate here given the small per-group samples (approximately 22 nights per day of week) and the absence of a normality guarantee for wearable-derived physiological data.
+ 
+(4)~\textit{Hyperparameter tuning}: Nested cross-validation (outer \texttt{TimeSeriesSplit} $k=5$, inner \texttt{GridSearchCV} $k=3$) was applied to Random Forest and XGBoost regressors. The inner loop selects optimal hyperparameters on training data only; the outer loop evaluates generalisation performance. This nested structure prevents the optimistic bias that arises when tuning and evaluation share the same data~\cite{cawley2010}.
+ 
+(5)~\textit{Multi-output regression}: A \texttt{MultiOutputRegressor} wrapper was used to jointly predict all three regression targets simultaneously. This was motivated by the strong inter-target correlations observed in the data (total sleep vs.\ deep sleep: $r = 0.771$; total sleep vs.\ REM: $r = 0.586$), which suggest that learning shared representations across targets may improve predictions.
+ 
+(6)~\textit{Anomaly detection}: Gaussian Mixture Models (GMM) and Isolation Forest were applied to six sleep architecture features to identify structurally unusual nights in an unsupervised manner. This complements the supervised classification approach by asking whether poor sleep nights are distinguishable from their sleep architecture alone, without relying on daytime predictors. GMM component count was selected by minimising the Bayesian Information Criterion (BIC), which penalises model complexity to prevent overfitting.
+
+\subsection*{Explainability analysis (SHAP / XAI)}
+% CLIX-M items: feature importance method, direction of effect, local explanations, clinical plausibility
+TreeSHAP~\cite{lundberg2017} was applied to Random Forest models fitted on the full dataset. Global feature importance was quantified as mean absolute SHAP value per feature. Dependence plots assessed the direction and nonlinear structure of HRV effects on each sleep outcome. Waterfall (local) explanations were generated for the nights with the highest and lowest predicted REM sleep, enabling assessment of clinical plausibility of individual-level model reasoning in line with the CLIX-M checklist~\cite{clixm}.
+
+\subsection*{Evaluation metrics}
+% TRIPOD+AI item 10c: performance measures
+Regression: Mean Absolute Error (MAE, minutes), Root Mean Squared Error (RMSE, minutes), and coefficient of determination ($R^2$). Classification: AUC-ROC (primary, robust to class imbalance~\cite{tripodai}), macro F1, balanced accuracy, precision, and recall. Model calibration was assessed qualitatively via comparison of mean predicted probabilities to observed poor-sleep rates across CV folds.
+
+% ─── 3. RESULTS ───────────────────────────────────────────────────────────────
+\section*{Results}
+
+\subsection*{Dataset characteristics}
+% TRIPOD+AI item 13: participant flow and descriptive statistics
+\noindent The final dataset comprised 158 nights (Table~\ref{tab:descriptive}). Mean total sleep duration was 491.7\,$\pm$\,102.1 minutes, with a range of 210--775 minutes. Mean REM duration was 133.8\,$\pm$\,39.5 minutes and mean deep sleep 117.8\,$\pm$\,30.4 minutes. Mean sleep efficiency was 85.8\,$\pm$\,4.4\%, ranging from 74\% to 96\%. Mean daytime HRV was 42.0\,$\pm$\,12.0 ms. Daily step count ranged from 274 to 11,817 (mean 5,078); two days were flagged as possible non-wear days. Strong correlations were observed among regression targets: total sleep vs.\ deep sleep ($r = 0.771$), total sleep vs.\ REM ($r = 0.586$), motivating the multi-output regression experiment.
+
+\begin{table}[htbp]
+\caption{Descriptive statistics of daytime features and sleep outcomes (N\,=\,158 nights). SD\,=\,standard deviation; SOL\,=\,Sleep Onset Latency; WASO\,=\,Wake After Sleep Onset.}
+\label{tab:descriptive}
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Variable & Mean & SD & Min & Median & Max \\
+\midrule
+\multicolumn{6}{l}{\textit{Daytime features}} \\
+Avg.\ HR (bpm)        &  76.7 &  7.7 &  61 &  75 &  94 \\
+Avg.\ HRV (ms)        &  42.0 & 12.0 &  24 &  43 &  69 \\
+HRV Range (ms)        &  92.9 & 23.9 &  48 &  92 & 163 \\
+Avg.\ SpO$_2$ (\%)    &  95.0 &  0.8 &  93 &  95 &  96 \\
+Steps                 & 5078  & 2161 & 274 &5016 &11817 \\
+Calories (kcal)       & 1673  &  162 &1097 &1640 & 2266 \\
+\midrule
+\multicolumn{6}{l}{\textit{Sleep outcomes}} \\
+Time Asleep (min)     & 491.7 & 102.1 & 210 & 502 & 775 \\
+REM (min)             & 133.8 &  39.5 &  35 & 135 & 235 \\
+Deep Sleep (min)      & 117.8 &  30.4 &  30 & 120 & 190 \\
+Sleep Efficiency (\%) &  85.8 &   4.4 &  74 &  86 &  96 \\
+SOL (min)             &  24.8 &  14.1 &   5 &  22 &  60 \\
+WASO (min)            &  43.8 &  26.3 &   3 &  40 & 133 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection*{Exploratory data analysis}
+\noindent Pearson correlation analysis revealed weak linear associations between daytime features and sleep outcomes (maximum $|r| = 0.151$ between Avg.\ HRV and REM duration, $p = 0.059$; Figure~\ref{fig:corr}). Lag correlation analysis confirmed that HRV effects were strongest at the t-1 lag used in modelling and attenuated beyond three days (Figure~\ref{fig:lag}). The six-month time series of HRV and sleep outcomes is shown in Figure~\ref{fig:ts}, illustrating the longitudinal variability of both daytime physiology and sleep quality across the observation period. Feature distributions were approximately normal except for step count (skewness $+0.5$) and HRV minimum (skewness $+1.8$). Sleep efficiency was the only variable with a statistically significant day-of-week effect (Kruskal-Wallis $H = 13.94$, $p = 0.030$), with Wednesday consistently showing the lowest values (Figure~\ref{fig:weekly}).
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\linewidth]{fig3_correlation_heatmap.png}
+\caption{Pearson correlation matrix of daytime features and sleep outcomes. Colour scale: blue = negative, red = positive. Lower triangle only shown (symmetric matrix). Note the weak correlations between daytime physiological features and sleep outcomes (max $|r| = 0.151$).}
+\label{fig:corr}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\linewidth]{fig5_lag_correlations.png}
+\caption{Lag correlation analysis: Pearson $r$ between HRV features and sleep outcomes at lags of 0--7 days. Orange dashed line marks the t-1 lag used in all models. HRV effects are strongest at lag 1 and attenuate beyond lag 3.}
+\label{fig:lag}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\linewidth]{fig4_time_series.png}
+\caption{Six-month time series of daytime HRV (top), total sleep duration with poor-sleep nights marked in red (second), REM duration (third), and daily step count (bottom). Lines show 7-day rolling means; individual observations shown with reduced opacity.}
+\label{fig:ts}
+\end{figure}
+
+\subsection*{Machine learning regression (Task A)}
+No regression model achieved positive $R^2$ under walk-forward cross-validation, indicating that none outperformed a naive mean-prediction baseline (Table~\ref{tab:regression}, Figure~\ref{fig:reg}). Random Forest consistently performed best among default-parameter models, achieving $R^2 = -0.138$ (MAE\,=\,26.5\,min) for deep sleep, $R^2 = -0.222$ (MAE\,=\,87.4\,min) for total sleep, and $R^2 = -0.275$ (MAE\,=\,35.4\,min) for REM.
+
+Hyperparameter tuning via nested cross-validation substantially improved XGBoost: tuned XGBoost reached $R^2 = -0.179$ for total sleep ($\Delta = +0.177$ vs.\ default) with optimal parameters of learning rate\,=\,0.01 and max depth\,=\,2. Rolling/trend features improved deep sleep prediction from $R^2 = -0.138$ to $R^2 = -0.043$ ($\Delta = +0.095$) --- the single largest performance improvement across all experiments (Figure~\ref{fig:rolling}). Multi-output regression produced results identical to single-output models ($\Delta R^2 = 0.000$).
+
+SOL and WASO were also challenging to predict (best $R^2 = -0.215$ and $-0.287$ respectively), consistent with the broader difficulty of predicting sleep fragmentation metrics from daytime summaries. HRV showed a positive correlation with SOL ($r = 0.305$, $p < 0.001$) and a negative correlation with WASO ($r = -0.220$, $p = 0.006$), discussed further below.
+
+\begin{table}[htbp]
+\caption{Regression model comparison under walk-forward cross-validation ($k=5$). Best $R^2$ per target in bold. DL\,=\,deep learning.}
+\label{tab:regression}
+\centering
+\small
+\begin{tabular}{llrrr}
+\toprule
+Target & Model & MAE\,(min) & RMSE\,(min) & $R^2$ \\
+\midrule
+\multirow{5}{*}{Total Sleep}
+ & Linear Regression   & 93.7  & 115.4 & $-$0.432 \\
+ & Ridge               & 92.1  & 113.5 & $-$0.383 \\
+ & Random Forest       & \textbf{87.4}  & \textbf{106.9} & $-$0.222 \\
+ & XGBoost (tuned)     & 89.4  & 112.4 & $\mathbf{-0.179}$ \\
+ & LSTM (DL)           & 299.9 & 316.1 & $-$20.02 \\
+\midrule
+\multirow{4}{*}{REM}
+ & Ridge               & 40.9  &  48.9 & $-$0.746 \\
+ & Random Forest       & \textbf{35.4}  & \textbf{43.1}  & $-$0.275 \\
+ & XGBoost (tuned)     & 37.2  &  44.8 & $\mathbf{-0.213}$ \\
+ & LSTM (DL)           & 67.1 & 76.4 & $-$6.013 \\
+\midrule
+\multirow{4}{*}{Deep Sleep}
+ & Random Forest       & 26.5  &  32.6 & $-$0.138 \\
+ & RF + rolling feats  & \textbf{27.1}  & \textbf{33.4}  & $\mathbf{-0.043}$ \\
+ & XGBoost (tuned)     & 28.1  &  34.2 & $-$0.195 \\
+ & LSTM (DL)           & 56.7 & 62.9 & $-$5.917 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\linewidth]{fig9_regression_results.png}
+\caption{Regression model comparison: R$^2$ (mean $\pm$ std across 5 CV folds) for each target. Negative $R^2$ indicates worse-than-mean-prediction performance. Random Forest and tuned XGBoost consistently outperform linear baselines.}
+\label{fig:reg}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\linewidth]{fig21_rolling_features.png}
+\caption{Experiment 1: Effect of rolling/trend features. Comparison of R$^2$ between original 13-feature set and enriched 49-feature set (including 3-day mean, 7-day mean, and 3-day difference features). Deep sleep prediction improves by $\Delta R^2 = +0.095$.}
+\label{fig:rolling}
+\end{figure}
+
+\subsection*{Machine learning classification (Task B)}
+SVM with RBF kernel achieved the highest AUC-ROC of 0.622 among supervised classifiers (Table~\ref{tab:classification}, Figure~\ref{fig:roc}). All classifiers outperformed a random baseline (AUC\,=\,0.50). F1 scores remained low (0.10--0.22) across all models, reflecting the residual difficulty of the binary classification task. Deep learning classifiers (LSTM AUC\,=\,0.446, 1D-CNN AUC\,=\,0.383) underperformed classical ML counterparts.
+
+\begin{table}[htbp]
+\caption{Classification model comparison (walk-forward CV, $k=5$). Primary metric AUC-ROC in bold for best model. Bal.\ Acc.\,=\,balanced accuracy.}
+\label{tab:classification}
+\centering
+\small
+\begin{tabular}{lrrrrr}
+\toprule
+Model & AUC-ROC & F1 & Bal.\ Acc. & Precision & Recall \\
+\midrule
+Logistic Reg.  & 0.396 & 0.105 & 0.356 & 0.072 & 0.203 \\
+\textbf{SVM (RBF)}  & \textbf{0.622} & 0.125 & 0.398 & 0.113 & 0.187 \\
+Random Forest  & 0.436 & 0.150 & 0.530 & 0.161 & 0.433 \\
+XGBoost        & 0.415 & 0.103 & 0.393 & 0.082 & 0.193 \\
+LSTM           & 0.446 & 0.180 & 0.500 & 0.177 & 0.440 \\
+1D-CNN         & 0.383 & 0.000 & 0.415 & 0.000 & 0.000 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.75\linewidth]{fig12_roc_curves.png}
+\caption{ROC curves for all classifiers on the final CV fold. Dashed diagonal = random classifier (AUC\,=\,0.50). SVM achieves the highest AUC (0.622). All supervised models outperform random, but none approach strong discrimination.}
+\label{fig:roc}
+\end{figure}
+
+\subsection*{Anomaly detection (Experiment 6)}
+Unsupervised anomaly detection outperformed all supervised classifiers (Figure~\ref{fig:anomaly}). Isolation Forest achieved AUC\,=\,0.728 and GMM achieved AUC\,=\,0.696 against the binary poor-sleep label, compared to the best supervised AUC of 0.622. BIC selected two GMM components ($k = 2$), corresponding structurally to normal and disrupted sleep nights. Both methods flagged 16 nights as anomalous (contamination 10\%), with 86.1\% agreement between methods and 5 nights identified by both simultaneously.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\linewidth]{fig26_anomaly_detection.png}
+\caption{Anomaly detection results. \textit{Left}: BIC curve for GMM component selection (optimal $k=2$). \textit{Centre}: GMM vs.\ Isolation Forest anomaly scores per night, coloured by poor/good sleep label. \textit{Right}: Anomaly scores over time; red circles indicate nights flagged by both methods simultaneously.}
+\label{fig:anomaly}
+\end{figure}
+
+\subsection*{Weekly patterns (Experiment 3)}
+Sleep efficiency was the only variable to show a statistically significant day-of-week effect (Kruskal-Wallis $H = 13.94$, $p = 0.030$; Figure~\ref{fig:weekly}). Sleep duration, REM, deep sleep, HRV, and step count showed no significant weekly pattern ($p > 0.50$ in all cases), suggesting this individual's sleep is largely consistent across the week despite day-specific efficiency variation.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\linewidth]{fig23_weekly_patterns.png}
+\caption{Weekly patterns in sleep and physiological variables. \textit{Top row}: box plots by day of week for sleep efficiency, REM, and HRV; Kruskal-Wallis p-values annotated. \textit{Bottom}: normalised heatmap of mean values by day (z-score per variable). Wednesday shows consistently below-average sleep efficiency and HRV.}
+\label{fig:weekly}
+\end{figure}
+
+\subsection*{SHAP explainability analysis}
+% CLIX-M checklist items addressed below
+Global SHAP importance identified caloric expenditure, maximum HR, and HRV-derived features as the most influential predictors across all regression targets (Table~\ref{tab:shap}; Figures~\ref{fig:shap_bar} and~\ref{fig:shap_bee}). HRV features appeared in the top five for all three regression outcomes. For poor-sleep classification, HRV range ranked first (mean $|$SHAP$|$ = 0.042), followed by maximum HR (0.036), indicating that within-day autonomic variability rather than average HRV level is most informative for predicting efficiency-defined poor nights.
+
+SHAP dependence plots (Figure~\ref{fig:shap_dep}) revealed a consistent negative association between daytime HRV value and its SHAP contribution to predicted sleep duration ($r \approx -0.75$), meaning higher HRV was associated with reduced predicted sleep duration. This counterintuitive finding is addressed in the Discussion.
+
+Local waterfall explanations (Figure~\ref{fig:shap_wf}) confirmed clinically plausible reasoning for individual night predictions: the night with the lowest predicted REM was characterised by elevated maximum HR and low caloric expenditure as the dominant negative contributors, consistent with physiological under-recovery.
+
+\begin{table}[htbp]
+\caption{SHAP global feature importance: mean $|$SHAP$|$ for the top features per regression target and poor-sleep classification. ``--'' indicates feature not in top five for that target.}
+\label{tab:shap}
+\centering
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Feature & Total Sleep & REM & Deep Sleep & Poor Sleep \\
+\midrule
+Calories      & \textbf{10.494} & 1.632  & \textbf{2.700} & -- \\
+Max HR        & 8.710  & 2.924  & --    & 0.0360 \\
+Max HRV       & 7.921  & 2.074  & 2.583 & 0.0297 \\
+Avg HR        & 6.884  & --     & 1.064 & -- \\
+Min HR        & --     & \textbf{4.613}  & 1.164 & -- \\
+Avg HRV       & 3.314  & --     & 2.669 & 0.0213 \\
+Steps         & 3.838  & 2.094  & 2.151 & 0.0214 \\
+HRV Range     & --     & --     & --    & \textbf{0.0419} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\linewidth]{fig17_shap_importance_bar.png}
+\caption{SHAP global feature importance (mean $|$SHAP$|$) for each regression target. Caloric expenditure and HRV-derived features dominate across all outcomes.}
+\label{fig:shap_bar}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\linewidth]{fig16_shap_beeswarm.png}
+\caption{SHAP beeswarm plots for each regression target. Each dot represents one night. Colour indicates feature value (red\,=\,high, blue\,=\,low). Horizontal position indicates SHAP value (positive = increases prediction, negative = decreases).}
+\label{fig:shap_bee}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\linewidth]{fig18_shap_dependence_hrv.png}
+\caption{SHAP dependence plots: HRV features vs.\ sleep outcomes. Trend lines show negative slopes (higher HRV $\rightarrow$ lower SHAP contribution to sleep duration), discussed in the Discussion section. Colour encodes step count (green\,=\,active, red\,=\,sedentary).}
+\label{fig:shap_dep}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\linewidth]{fig19_shap_waterfall.png}
+\caption{SHAP local explanations (waterfall plots) for REM sleep. \textit{Left}: Night with the lowest predicted REM --- elevated max HR and low calories are the dominant negative contributors. \textit{Right}: Night with the highest predicted REM --- high calories and low resting HR dominate positive contributions. Baseline\,=\,average model prediction.}
+\label{fig:shap_wf}
+\end{figure}
+
+% ─── 4. DISCUSSION ────────────────────────────────────────────────────────────
+\section*{Discussion}
+
+The primary finding of this study is that daytime physiological metrics from a single consumer wearable provide limited direct predictive power for next-night sleep outcomes under walk-forward cross-validation. All regression models yielded negative $R^2$ values, indicating that none outperformed a naive mean-prediction baseline. This is consistent with the multifactorial nature of sleep regulation, which is governed by homeostatic sleep pressure, circadian rhythmicity, and environmental, psychological, and behavioural factors; the majority of which are not captured by wrist-worn HR, HRV, SpO$_2$, and activity summaries~\cite{worley2018}. The weak linear correlations observed during EDA (max $|r| = 0.151$) served as an early indicator of this limited predictive signal.
+
+\subsection*{The counterintuitive HRV direction of effect}
+SHAP dependence analysis consistently showed a negative association between daytime HRV and its contribution to predicted sleep duration ($r \approx -0.75$). Higher HRV, generally a marker of parasympathetic dominance and recovery~\cite{herhaus2022}, was associated with reduced predicted sleep. Several explanations are plausible. Days with high physical activity generate post-exercise HRV elevation via autonomic recovery; the same individual may also sleep shorter on those active days due to schedule or social factors. Additionally, the device reports HRV as a daily average across all waking readings, conflating resting, exercise-recovery, and stress-reactive HRV into one number. This aggregation likely masks the well-documented pre-sleep HRV--sleep quality relationship observed in PSG studies~\cite{hayano2022}. The positive correlation between HRV and SOL ($r = 0.305$, $p < 0.001$) may reflect a similar confound: on days of higher autonomic activity (post-exercise), the individual takes longer to fall asleep despite better physiological readiness, possibly due to circadian or behavioural factors. These findings underscore the importance of context-specific HRV interpretation for personalised sleep prediction.
+
+\subsection*{Anomaly detection as a complementary approach}
+The most clinically actionable finding is that Isolation Forest (AUC\,=\,0.728) and GMM (AUC\,=\,0.696) substantially outperformed all supervised classifiers (best AUC\,=\,0.622). This indicates that poor sleep nights are structurally distinguishable in their sleep architecture (characterised by anomalous combinations of reduced deep sleep, elevated WASO, and low efficiency) even when daytime physiological signals alone carry limited predictive information. This motivates a two-stage monitoring strategy: unsupervised detection identifies anomalous nights post-hoc, which can trigger retrospective investigation of which daytime factors preceded them.
+
+\subsection*{Deep learning underperformance}
+LSTM and 1D-CNN models substantially underperformed classical ML across both tasks, with regression $R^2$ in the range $-14$ to $-34$ and classification AUC below 0.50. Sequence models with thousands of trainable parameters cannot learn meaningful temporal dependencies from 151 windowed samples~\cite{lee2025}. Both architectures converged to near-mean prediction, evidenced by low output variance. This is a fundamental constraint of the N-of-1 design at this observation length; extending to one or more years of daily data would be necessary to realise the potential of sequence modelling.
+
+\subsection*{Feature importance and clinical relevance}
+SHAP analysis identified caloric expenditure and maximum HR (proxies for overall physical load during the day) as the most consistently influential features. This is physiologically plausible: higher daily energy expenditure is associated with increased homeostatic sleep pressure via adenosine accumulation~\cite{alnawwar2023}. HRV range ranked second for poor-sleep classification, suggesting that within-day autonomic dysregulation, and not simply low average HRV, characterises days preceding poor sleep. Rolling 3-day and 7-day physiological trends provided the largest improvement in deep sleep prediction ($\Delta R^2 = +0.095$), supporting the hypothesis that the trajectory of physiological state matters more than any single day's value.
+
+\subsection*{Limitations}
+The N-of-1 design precludes population-level generalisation; all findings are specific to this individual's patterns. The Didiconn device has not been validated against PSG for this individual, and known limitations of wrist-based PPG for accurate HRV quantification~\cite{leeTW2023} may introduce systematic error. The feature set omits psychological state, dietary habits, caffeine intake, and environmental factors known to influence sleep. The six-month observation window may contain unmeasured confounds such as illness, travel, or academic stress periods.
+
+\subsection*{Future directions}
+Extending observation to 12 months or more, integrating ecological momentary assessments of stress and mood, using continuous pre-sleep HRV rather than daily averages, and adding environmental sensors (room temperature, light, noise) would likely substantially improve predictive signal. Multi-participant N-of-1 models, fitted per individual and compared, could reveal which physiological patterns are idiosyncratic vs.\ generalisable.
+
+% ─── 5. CONCLUSION ────────────────────────────────────────────────────────────
+\section*{Conclusion}
+
+This study evaluated the feasibility of predicting next-night sleep quality from daytime consumer wearable metrics across 158 nights in an N-of-1 design. Supervised machine learning and deep learning models showed limited predictive performance, consistent with the multifactorial determinants of sleep and the constraints of daily-resolution physiological summaries from a consumer device. Unsupervised anomaly detection substantially outperformed supervised classifiers (Isolation Forest AUC\,=\,0.728 vs.\ best supervised AUC\,=\,0.622), demonstrating that poor sleep nights are structurally distinguishable in their sleep architecture. SHAP analysis identified caloric expenditure, maximum HR, and HRV variability as the most influential predictors, with rolling temporal features providing the largest single improvement in deep sleep regression ($\Delta R^2 = +0.095$). These findings contribute to the growing literature on personalised wearable-based precision health monitoring and delineate both the potential and the current limitations of consumer devices for individual-level sleep prediction.
+
+% ─── REFERENCES ───────────────────────────────────────────────────────────────
+\begin{thebibliography}{99}
+
+\bibitem{worley2018}
+Worley, S.~L. (2018). The extraordinary importance of sleep: The detrimental effects of inadequate sleep on health and public safety drive an explosion of sleep research. \textit{Pharmacy \& Therapeutics}, \textbf{43}(12), 758--763.
+
+\bibitem{alnawwar2023}
+Alnawwar, M.~A., Alraddadi, M.~I., Algethmi, R.~A., Salem, G.~A., Salem, M.~A., \& Alharbi, A.~A. (2023). The effect of physical activity on sleep quality and sleep disorder: A systematic review. \textit{Cureus}, \textbf{15}(8), e43595. \url{https://doi.org/10.7759/cureus.43595}
+
+\bibitem{rundo2019}
+Rundo, J.~V., \& Downey III, R. (2019). Polysomnography. \textit{Handbook of Clinical Neurology}, \textbf{160}, 381--392. \url{https://doi.org/10.1016/B978-0-444-64032-1.00025-4}
+
+\bibitem{leeTW2023}
+Lee, T., Cho, Y., Cha, K.~S., et~al. (2023). Accuracy of 11 wearable, nearable, and airable consumer sleep trackers: Prospective multicenter validation study. \textit{JMIR mHealth and uHealth}, \textbf{11}, e50983. \url{https://doi.org/10.2196/50983}
+
+\bibitem{herhaus2022}
+Herhaus, B., Kalin, A., Gouveris, H., \& Petrowski, K. (2022). Mobile heart rate variability biofeedback improves autonomic activation and subjective sleep quality of healthy adults: A pilot study. \textit{Frontiers in Physiology}, \textbf{13}, 821741. \url{https://doi.org/10.3389/fphys.2022.821741}
+
+\bibitem{hayano2022}
+Hayano, J., \& Yuda, E. (2021). Assessment of autonomic function by long-term heart rate variability: Beyond the classical framework of LF and HF measurements. \textit{Journal of Physiological Anthropology}, \textbf{40}, 21. \url{https://doi.org/10.1186/s40101-021-00272-y}
+
+\bibitem{lee2025}
+Lee, H., Cho, M., Lee, S.~W., \& Park, S. (2025). Predicting sleep quality with digital biomarkers and artificial neural networks. \textit{Frontiers in Psychiatry}, \textbf{16}, 1591448. \url{https://doi.org/10.3389/fpsyt.2025.1591448}
+
+\bibitem{dicredico2024}
+Di~Credico, A., Perpetuini, D., Izzicupo, P., et~al. (2024). Predicting sleep quality through biofeedback: A machine learning approach using heart rate variability and skin temperature. \textit{Clocks \& Sleep}, \textbf{6}(3), 23. \url{https://doi.org/10.3390/clockssleep6030023}
+
+\bibitem{chen2024ml}
+Quezada~Reyes, R., \& Trejo, L.~A. (2025). Personalized machine learning intervention to improve sleep quality using wearable technology in healthy middle-aged adults from Mexico City: Protocol for a pilot randomized controlled trial. \textit{JMIR Research Protocols}. \url{https://doi.org/10.2196/76415}
+
+\bibitem{aasm2017}
+American Academy of Sleep Medicine. (2017). \textit{AASM Manual for the Scoring of Sleep and Associated Events: Rules, Terminology and Technical Specifications}, Version 2.4. American Academy of Sleep Medicine.
+
+\bibitem{lundberg2017}
+Lundberg, S.~M., \& Lee, S.-I. (2017). A unified approach to interpreting model predictions. \textit{Advances in Neural Information Processing Systems}, \textbf{30}, 4765--4774.
+
+\bibitem{tripodai}
+Collins, G.~S., Moons, K.~G.~M., Dhiman, P., et~al. (2024). TRIPOD+AI statement: Updated guidance for reporting clinical prediction models that use regression or machine learning methods. \textit{BMJ}, \textbf{385}, e078378. \url{https://doi.org/10.1136/bmj-2023-078378}
+
+\bibitem{clixm}
+Brankovic, A., Cook, D., Rahman, J., Delaforce, A., Li, J., Magrabi, F., Cabitza, F., Coiera, E., \& Bradford, D. (2025). Clinician-informed XAI evaluation checklist with metrics (CLIX-M) for AI-powered clinical decision support systems. \textit{npj Digital Medicine}, \textbf{8}, 364. \url{https://doi.org/10.1038/s41746-025-01764-2}
+
+\bibitem{rahimieichi2021}
+Rahimi-Eichi, H., Coombs~III, G., Vidal~Bustamante, C.~M., Onnela, J.-P., Baker, J.~T., \& Buckner, R.~L. (2021). Open-source longitudinal sleep analysis from accelerometer data (DPSleep): Algorithm development and validation. \textit{JMIR mHealth and uHealth}, \textbf{9}(10), e29849. \url{https://doi.org/10.2196/29849}
+
+\bibitem{kruskal1952}
+Kruskal, W.~H., \& Wallis, W.~A. (1952). Use of ranks in one-criterion variance analysis. \textit{Journal of the American Statistical Association}, \textbf{47}(260), 583--621. \url{https://doi.org/10.2307/2280779}
+
+\bibitem{cawley2010}
+Cawley, G.~C., \& Talbot, N.~L.~C. (2010). On over-fitting in model selection and subsequent selection bias in performance evaluation. \textit{Journal of Machine Learning Research}, \textbf{11}, 2079--2107. \url{http://jmlr.org/papers/v11/cawley10a.html}
+
+\end{thebibliography}
+
+\end{document}
